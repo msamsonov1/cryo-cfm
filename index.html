@@ -1,0 +1,1335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CryoChamber: Zero-Boil-Off Cryogenic Propellant Slosh Sentinel</title>
+  <!-- Tailwind CSS via CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Chart.js for precision a-rho phase plane & telemetry rendering -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            space: '#050811',
+            panel: '#0B1220',
+            panelBorder: '#1E293B',
+            cyanGlow: '#00F0FF',
+            crimsonAlert: '#FF2A55',
+            amberCaution: '#FFB800',
+            emeraldSafe: '#00F59B',
+          },
+          fontFamily: {
+            mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
+            sans: ['Inter', 'sans-serif']
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    /* Custom styling for aerospace dark terminal aesthetic */
+    body {
+      background-color: #04070E;
+      color: #E2E8F0;
+      overflow-x: hidden;
+      user-select: none;
+    }
+    .hud-grid {
+      background-image: linear-gradient(rgba(0, 240, 255, 0.03) 1px, transparent 1px),
+                        linear-gradient(90deg, rgba(0, 240, 255, 0.03) 1px, transparent 1px);
+      background-size: 24px 24px;
+    }
+    .radar-scan {
+      background: linear-gradient(180deg, rgba(0, 240, 255, 0) 0%, rgba(0, 240, 255, 0.08) 50%, rgba(0, 240, 255, 0.25) 100%);
+    }
+    /* Custom scrollbars */
+    ::-webkit-scrollbar {
+      width: 5px;
+      height: 5px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #090E17;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #1E293B;
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #334155;
+    }
+    .glow-cyan {
+      box-shadow: 0 0 15px rgba(0, 240, 255, 0.35);
+    }
+    .glow-alert {
+      box-shadow: 0 0 18px rgba(255, 42, 85, 0.45);
+    }
+  </style>
+</head>
+<body class="hud-grid min-h-screen flex flex-col font-sans">
+
+  <!-- TOP STATUS BAR / HEADER -->
+  <header class="border-b border-panelBorder bg-panel/90 backdrop-blur px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 sticky top-0 z-50">
+    <div class="flex items-center gap-3">
+      <div class="p-2 rounded-lg bg-cyan-950/40 border border-cyan-500/40 text-cyanGlow">
+        <i data-lucide="orbit" class="w-6 h-6"></i>
+      </div>
+      <div>
+        <div class="flex items-center gap-2">
+          <span class="text-xs font-mono font-bold tracking-widest text-cyanGlow px-1.5 py-0.5 rounded bg-cyan-950/80 border border-cyan-500/30">CRYO-CFM SENTINEL</span>
+          <span class="text-xs text-slate-400 font-mono">TLM-VER: 4.8.2-MARS</span>
+        </div>
+        <h1 class="text-sm md:text-base font-bold text-white tracking-wide flex items-center gap-2">
+          CryoChamber: Zero-Boil-Off Slosh & Cavitation Sentinel
+        </h1>
+      </div>
+    </div>
+
+    <!-- Live Telemetry Badges -->
+    <div class="flex items-center gap-4 text-xs font-mono">
+      <div class="hidden sm:flex flex-col text-right">
+        <span class="text-slate-400 text-[10px]">MISSION PROFILE</span>
+        <span class="text-emeraldSafe font-semibold" id="missionProfileTag">ARTEMIS TRANS-MARS INJECTION</span>
+      </div>
+      <div class="h-7 w-px bg-panelBorder hidden sm:block"></div>
+      <div class="flex flex-col text-right">
+        <span class="text-slate-400 text-[10px]">SUMP STATE</span>
+        <span class="font-bold text-emeraldSafe" id="pumpVaporRisk">NOMINAL SUBCOOLED</span>
+      </div>
+      <div class="h-7 w-px bg-panelBorder"></div>
+      <button id="audioToggleBtn" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-panelBorder bg-slate-900/60 hover:bg-slate-800 text-slate-300 transition text-[11px]">
+        <i data-lucide="volume-2" id="audioIcon" class="w-3.5 h-3.5 text-cyanGlow"></i>
+        <span id="audioStatusText">SYNTH ON</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- MAIN HUD CONTENT -->
+  <main class="flex-1 p-3 md:p-5 grid grid-cols-1 lg:grid-cols-12 gap-4 max-w-[1600px] w-full mx-auto">
+    
+    <!-- LEFT COLUMN: CONTROLS & FLUID PARAMETERS (col 12 -> 3) -->
+    <section class="lg:col-span-3 flex flex-col gap-4">
+      
+      <!-- Fluid Tank Selector -->
+      <div class="p-4 rounded-xl border border-panelBorder bg-panel/80 flex flex-col gap-3 shadow-lg">
+        <div class="flex items-center justify-between border-b border-panelBorder/70 pb-2">
+          <div class="flex items-center gap-2 text-cyanGlow text-xs font-mono font-bold tracking-wider">
+            <i data-lucide="layers" class="w-4 h-4"></i>
+            <span>PROPELLANT SYSTEM</span>
+          </div>
+          <span class="text-[11px] font-mono text-slate-400" id="propellantSymbol">LOX (Liquid O₂)</span>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2">
+          <button id="selectLOX" class="px-3 py-2 text-xs font-mono font-bold rounded-lg border border-cyan-500 bg-cyan-950/40 text-cyanGlow transition flex flex-col items-center">
+            <span>LOX STAGE</span>
+            <span class="text-[10px] text-slate-300 font-normal">90.2 K | 1141 kg/m³</span>
+          </button>
+          <button id="selectLH2" class="px-3 py-2 text-xs font-mono font-bold rounded-lg border border-panelBorder bg-slate-900/50 text-slate-400 hover:text-slate-200 transition flex flex-col items-center">
+            <span>LH₂ STAGE</span>
+            <span class="text-[10px] text-slate-500 font-normal">20.3 K | 71 kg/m³</span>
+          </button>
+        </div>
+
+        <!-- Real-time Thermal Parameters -->
+        <div class="bg-black/40 p-3 rounded-lg border border-panelBorder/60 space-y-2 text-xs font-mono">
+          <div class="flex justify-between">
+            <span class="text-slate-400">Sat. Temperature:</span>
+            <span class="text-slate-200" id="dispTsat">90.18 K</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-slate-400">Wall Superheat (ΔT):</span>
+            <span class="text-amberCaution" id="dispDeltaT">+4.8 K (Micro-boil)</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-slate-400">Tank Sump Ullage P:</span>
+            <span class="text-cyanGlow" id="dispPressure">182.4 kPa</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-slate-400">NPSH Margin:</span>
+            <span class="text-emeraldSafe font-bold" id="dispNPSH">+2.42 m</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Maneuver / Acceleration Excitation Panel -->
+      <div class="p-4 rounded-xl border border-panelBorder bg-panel/80 flex flex-col gap-3 shadow-lg">
+        <div class="flex items-center justify-between border-b border-panelBorder/70 pb-2">
+          <div class="flex items-center gap-2 text-amberCaution text-xs font-mono font-bold tracking-wider">
+            <i data-lucide="zap" class="w-4 h-4"></i>
+            <span>ACCELERATION TRANSIENTS (a)</span>
+          </div>
+          <span class="text-[11px] font-mono text-amberCaution" id="currAccelDisplay">0.024 m/s²</span>
+        </div>
+
+        <!-- Acceleration Slider -->
+        <div class="space-y-1">
+          <div class="flex justify-between text-[11px] font-mono text-slate-400">
+            <span>Lateral Transient (a_lat)</span>
+            <span id="sliderAccelVal">0.040 m/s²</span>
+          </div>
+          <input type="range" id="accelInput" min="0" max="0.30" step="0.002" value="0.04" class="w-full accent-amberCaution bg-slate-800 h-1.5 rounded cursor-pointer">
+          <div class="flex justify-between text-[9px] font-mono text-slate-500">
+            <span>0.00 (Drift)</span>
+            <span>0.15 (Slew)</span>
+            <span>0.30 (Hard Burn)</span>
+          </div>
+        </div>
+
+        <!-- Frequency Slider for Sloshing Mode -->
+        <div class="space-y-1">
+          <div class="flex justify-between text-[11px] font-mono text-slate-400">
+            <span>Slosh Resonance (ω)</span>
+            <span id="sliderFreqVal">0.35 Hz</span>
+          </div>
+          <input type="range" id="freqInput" min="0.05" max="1.50" step="0.05" value="0.35" class="w-full accent-cyanGlow bg-slate-800 h-1.5 rounded cursor-pointer">
+        </div>
+
+        <!-- Manual Disturbance Pulses -->
+        <div class="grid grid-cols-2 gap-2 pt-1">
+          <button id="pulsePitchBtn" class="px-2 py-2 text-xs font-mono bg-slate-900 border border-slate-700 hover:border-amberCaution/70 rounded-lg text-slate-200 transition flex items-center justify-center gap-1.5">
+            <i data-lucide="rotate-ccw" class="w-3.5 h-3.5 text-amberCaution"></i>
+            <span>PITCH SLEW</span>
+          </button>
+          <button id="pulseGimbalBtn" class="px-2 py-2 text-xs font-mono bg-slate-900 border border-slate-700 hover:border-amberCaution/70 rounded-lg text-slate-200 transition flex items-center justify-center gap-1.5">
+            <i data-lucide="move" class="w-3.5 h-3.5 text-amberCaution"></i>
+            <span>GIMBAL JOLT</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Autonomous Sentinel RCS Settle Throttling -->
+      <div class="p-4 rounded-xl border border-panelBorder bg-panel/80 flex flex-col gap-3 shadow-lg">
+        <div class="flex items-center justify-between border-b border-panelBorder/70 pb-2">
+          <div class="flex items-center gap-2 text-emeraldSafe text-xs font-mono font-bold tracking-wider">
+            <i data-lucide="shield-check" class="w-4 h-4"></i>
+            <span>AUTONOMOUS RCS SETTLING</span>
+          </div>
+          <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-950/60 border border-emerald-500/30 text-emeraldSafe" id="rcsSentinelModeTag">AUTO CLOSED-LOOP</span>
+        </div>
+
+        <p class="text-[11px] text-slate-400 leading-relaxed font-sans">
+          Dynamically commands pulsed ullage settling thrusters when sump bulk density $\rho$ approaches the <span class="text-crimsonAlert font-mono">Cavitation Limit</span> boundary.
+        </p>
+
+        <!-- Auto Mode Switch & Manual Override -->
+        <div class="flex items-center justify-between bg-black/40 p-2.5 rounded-lg border border-panelBorder/60">
+          <span class="text-xs font-mono text-slate-300">Sentinel Settle Loop:</span>
+          <label class="relative inline-flex items-center cursor-pointer">
+            <input type="checkbox" id="autoSentinelToggle" checked class="sr-only peer">
+            <div class="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emeraldSafe"></div>
+          </label>
+        </div>
+
+        <div class="space-y-1">
+          <div class="flex justify-between text-[11px] font-mono text-slate-400">
+            <span>RCS Settling Intensity:</span>
+            <span id="rcsPulseOutput">0.00 N (IDLE)</span>
+          </div>
+          <!-- Progress bar for instantaneous RCS pulse -->
+          <div class="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+            <div id="rcsProgressBar" class="bg-gradient-to-r from-emeraldSafe via-cyanGlow to-amberCaution h-full w-0 transition-all duration-75"></div>
+          </div>
+        </div>
+
+        <button id="manualUllagePulseBtn" class="w-full py-2.5 rounded-lg bg-emerald-950/60 border border-emerald-500 hover:bg-emerald-900/60 text-emeraldSafe font-mono text-xs font-bold transition flex items-center justify-center gap-2">
+          <i data-lucide="flame" class="w-4 h-4"></i>
+          <span>MANUAL ULLAGE SETTLE BURN</span>
+        </button>
+      </div>
+
+    </section>
+
+    <!-- CENTER COLUMN: VISUAL SIMULATION OF PROPELLANT TANK (col 12 -> 5) -->
+    <section class="lg:col-span-5 flex flex-col gap-4">
+      <div class="relative p-4 rounded-xl border border-panelBorder bg-panel/90 flex flex-col h-full shadow-2xl overflow-hidden">
+        
+        <!-- Tank Viewport Header -->
+        <div class="flex items-center justify-between pb-2 mb-2 border-b border-panelBorder/70 z-10">
+          <div class="flex items-center gap-2 text-xs font-mono text-cyanGlow">
+            <i data-lucide="crosshair" class="w-4 h-4"></i>
+            <span>TANK SECTION CUTAWAY // SUMP INTAKE</span>
+          </div>
+          <div class="flex items-center gap-2 text-[10px] font-mono">
+            <span class="flex items-center gap-1 text-slate-400">
+              <span class="w-2 h-2 rounded-full bg-cyan-400"></span> Liquid
+            </span>
+            <span class="flex items-center gap-1 text-slate-400">
+              <span class="w-2 h-2 rounded-full bg-amber-400"></span> Micro-Boil Pockets
+            </span>
+            <span class="flex items-center gap-1 text-slate-400">
+              <span class="w-2 h-2 rounded-full bg-crimsonAlert"></span> Cavitation Vapor
+            </span>
+          </div>
+        </div>
+
+        <!-- Tank Canvas Container with Responsive Sizing -->
+        <div class="relative flex-1 w-full min-h-[380px] lg:min-h-[460px] rounded-lg bg-gradient-to-b from-space to-[#030914] border border-cyan-950/50 flex items-center justify-center overflow-hidden">
+          
+          <!-- Cryo Canvas -->
+          <canvas id="cryoTankCanvas" class="w-full h-full block cursor-crosshair"></canvas>
+
+          <!-- Top Overlay: Tank Wall Temperature Gradients -->
+          <div class="absolute top-2 left-2 text-[10px] font-mono bg-black/60 px-2 py-1 rounded border border-panelBorder/80 text-amberCaution flex items-center gap-1.5">
+            <i data-lucide="thermometer" class="w-3.5 h-3.5"></i>
+            <span>MLI Wall Boundary: <strong id="wallTempTag">95.0 K</strong></span>
+          </div>
+
+          <!-- Top Right Overlay: Instantaneous Sump Density -->
+          <div class="absolute top-2 right-2 text-[10px] font-mono bg-black/70 px-2 py-1 rounded border border-panelBorder/80 text-right">
+            <div class="text-slate-400">INTAKE DENSITY ($\rho$)</div>
+            <div class="text-cyanGlow font-bold text-xs" id="canvasDensityTag">1141.0 kg/m³</div>
+          </div>
+
+          <!-- Bottom Warning / Slosh Alert Banner -->
+          <div id="sloshCavitationWarning" class="absolute bottom-3 inset-x-3 hidden bg-crimsonAlert/20 border border-crimsonAlert backdrop-blur-md p-2.5 rounded-lg flex items-center justify-between text-xs font-mono text-white animate-pulse">
+            <div class="flex items-center gap-2">
+              <i data-lucide="alert-triangle" class="w-5 h-5 text-crimsonAlert"></i>
+              <div>
+                <div class="font-bold text-crimsonAlert">CAVITATION RISK: VAPOR DETECTED IN SUMP</div>
+                <div class="text-[10px] text-slate-200">Fluid density collapse below critical vapor threshold! Throttling RCS...</div>
+              </div>
+            </div>
+            <span class="text-xs font-bold text-crimsonAlert bg-crimsonAlert/30 px-2 py-1 rounded">TRIP IMMINENT</span>
+          </div>
+        </div>
+
+        <!-- Tank Viewport Footer Status -->
+        <div class="pt-3 grid grid-cols-3 gap-2 text-center text-xs font-mono">
+          <div class="bg-black/40 p-2 rounded border border-panelBorder/70">
+            <span class="text-[10px] text-slate-400 block">SLOSH AMPLITUDE</span>
+            <span id="dispSloshAmp" class="text-amberCaution font-bold">12.4 cm</span>
+          </div>
+          <div class="bg-black/40 p-2 rounded border border-panelBorder/70">
+            <span class="text-[10px] text-slate-400 block">WALL FILM MICRO-BOIL</span>
+            <span id="dispBoilRate" class="text-cyanGlow font-bold">0.082 g/s</span>
+          </div>
+          <div class="bg-black/40 p-2 rounded border border-panelBorder/70">
+            <span class="text-[10px] text-slate-400 block">BUBBLE INGESTION RATIO</span>
+            <span id="dispVaporFraction" class="text-emeraldSafe font-bold">0.04%</span>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- RIGHT COLUMN: THE CORE a - \rho SENTINEL PHASE DIAGRAM & TELEMETRY (col 12 -> 4) -->
+    <section class="lg:col-span-4 flex flex-col gap-4">
+      
+      <!-- Chart Card: a (Acceleration) vs rho (Density) Sentinel Plot -->
+      <div class="p-4 rounded-xl border border-panelBorder bg-panel/90 flex flex-col shadow-2xl">
+        <div class="flex items-center justify-between border-b border-panelBorder/70 pb-2 mb-2">
+          <div class="flex items-center gap-2 text-xs font-mono font-bold text-cyanGlow">
+            <i data-lucide="activity" class="w-4 h-4"></i>
+            <span>PHASE PLANE: $a$ vs $\rho$</span>
+          </div>
+          <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-950/70 border border-cyan-500/30 text-cyanGlow">SENTINEL RADAR</span>
+        </div>
+
+        <p class="text-[11px] text-slate-400 font-sans mb-2">
+          Real-time tracking of tank-bottom density ($\rho$) against lateral acceleration ($a$). The boundary demarcates safe operation from suction cavitation vapor intake.
+        </p>
+
+        <!-- Chart Container -->
+        <div class="relative w-full h-[260px] bg-black/60 rounded-lg p-2 border border-panelBorder/60">
+          <canvas id="phasePlaneChart"></canvas>
+        </div>
+
+        <!-- Legend / Critical Phase Thresholds -->
+        <div class="mt-3 pt-2 border-t border-panelBorder/60 grid grid-cols-2 gap-2 text-[10px] font-mono">
+          <div class="flex items-center gap-1.5 text-slate-300">
+            <span class="w-3 h-1 bg-emeraldSafe rounded"></span>
+            <span>Stable Core ($\rho > \rho_{crit}$)</span>
+          </div>
+          <div class="flex items-center gap-1.5 text-slate-300">
+            <span class="w-3 h-1 bg-amberCaution rounded"></span>
+            <span>Micro-Boil Incipient</span>
+          </div>
+          <div class="flex items-center gap-1.5 text-slate-300">
+            <span class="w-3 h-1 bg-crimsonAlert rounded"></span>
+            <span>Vapor Ingestion Limit</span>
+          </div>
+          <div class="flex items-center gap-1.5 text-slate-300">
+            <span class="w-2.5 h-2.5 rounded-full bg-cyanGlow border border-white"></span>
+            <span>Instantaneous Operating Point</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Live Flight Event Log & Cavitation Margin Metrics -->
+      <div class="flex-1 p-4 rounded-xl border border-panelBorder bg-panel/80 flex flex-col shadow-lg min-h-[220px]">
+        <div class="flex items-center justify-between border-b border-panelBorder/70 pb-2 mb-2">
+          <div class="flex items-center gap-2 text-xs font-mono font-bold text-slate-300">
+            <i data-lucide="terminal" class="w-4 h-4 text-cyanGlow"></i>
+            <span>SENTINEL TELEMETRY BUS</span>
+          </div>
+          <button id="clearLogBtn" class="text-[10px] font-mono text-slate-500 hover:text-slate-300 transition">CLEAR LOG</button>
+        </div>
+
+        <!-- Terminal Output Stream -->
+        <div id="eventConsole" class="flex-1 font-mono text-[11px] text-slate-300 space-y-1.5 overflow-y-auto max-h-[200px] pr-1">
+          <!-- Populated by script -->
+        </div>
+
+        <!-- Export Telemetry Action -->
+        <div class="pt-3 mt-2 border-t border-panelBorder/60 flex items-center justify-between text-xs font-mono">
+          <button id="copyTlmBtn" class="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 border border-panelBorder text-slate-300 rounded transition flex items-center gap-1.5 text-[11px]">
+            <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+            <span>COPY TELEMETRY RECORD</span>
+          </button>
+          <span class="text-[10px] text-slate-500" id="copyNotice">READY</span>
+        </div>
+      </div>
+
+    </section>
+
+  </main>
+
+  <!-- EDUCATIONAL CFM THEORETICAL FOOTER -->
+  <footer class="border-t border-panelBorder bg-panel/95 px-4 py-3 text-xs font-mono text-slate-400 mt-auto">
+    <div class="max-w-[1600px] mx-auto flex flex-col md:flex-row items-center justify-between gap-2">
+      <div class="flex items-center gap-2">
+        <i data-lucide="info" class="w-4 h-4 text-cyanGlow flex-shrink-0"></i>
+        <span>
+          <strong>Insight:</strong> Sloshing drives subcooled cryogen up warm insulation walls ($\Delta T > 0$), triggering flashing micro-bubbles. At critical acceleration ($a$), these coalesce at the sump intake, collapsing local density ($\rho$) and triggering destructive turbopump cavitation.
+        </span>
+      </div>
+      <div class="text-[10px] text-slate-500 flex-shrink-0">
+        CRYOGENIC FLUID MANAGEMENT (CFM) • ZERO-BOIL-OFF (ZBO) PROTOCOL
+      </div>
+    </div>
+  </footer>
+
+  <!-- Notification Toast Modal -->
+  <div id="toastMessage" class="fixed bottom-6 right-6 z-50 bg-slate-900 border border-cyan-500/80 text-white px-4 py-2.5 rounded-lg shadow-2xl font-mono text-xs hidden items-center gap-2 transform transition-all duration-300">
+    <i data-lucide="bell" class="w-4 h-4 text-cyanGlow"></i>
+    <span id="toastText">System initialized</span>
+  </div>
+
+  <!-- JAVASCRIPT LOGIC ENGINE -->
+  <script>
+    /* =========================================================================
+       1. GLOBAL CFM STATE & PHYSICAL COEFFICIENTS
+       ========================================================================= */
+    const CFM_STATE = {
+      propellant: 'LOX', // 'LOX' or 'LH2'
+      baseDensity: 1141.0, // kg/m3 for LOX, 70.8 for LH2
+      currentDensity: 1141.0,
+      criticalDensityMargin: 0.94, // Cavitation occurs below 94% of base density
+      acceleration: 0.040, // m/s2 lateral
+      baseFreq: 0.35, // Hz
+      tankWallSuperheat: 4.8, // K
+      satTemp: 90.18, // K
+      tankPressure: 182.4, // kPa
+      sloshAmplitude: 0.12, // meters
+      vaporFraction: 0.04, // %
+      boilRate: 0.082, // g/s
+      autoSentinelActive: true,
+      rcsThrustLevel: 0.0, // 0.0 to 1.0 (N equivalent)
+      synthAudio: true,
+      simTime: 0,
+      phaseHistory: [] // [{a, rho, safe}]
+    };
+
+    // Propellant database
+    const PROPELLANT_DATA = {
+      LOX: {
+        name: 'Liquid Oxygen (LOX)',
+        symbol: 'LOX',
+        baseRho: 1141.0,
+        satT: 90.18,
+        wallTemp: 95.0,
+        boilSensitivity: 1.25,
+        viscosity: 0.18,
+        colorLiquid: 'rgba(0, 210, 255, 0.65)',
+        colorSurface: '#00F0FF',
+        bubbleColor: 'rgba(255, 200, 100, 0.85)'
+      },
+      LH2: {
+        name: 'Liquid Hydrogen (LH₂)',
+        symbol: 'LH₂',
+        baseRho: 70.85,
+        satT: 20.28,
+        wallTemp: 24.5,
+        boilSensitivity: 3.40, // Much lower density and latent heat, boils vigorously
+        viscosity: 0.013,
+        colorLiquid: 'rgba(140, 100, 255, 0.60)',
+        colorSurface: '#B388FF',
+        bubbleColor: 'rgba(255, 140, 180, 0.9)'
+      }
+    };
+
+    /* =========================================================================
+       2. WEB AUDIO SYNTHESIZER FOR CFM ACOUSTICS
+       ========================================================================= */
+    let audioCtx = null;
+    let humOsc = null;
+    let sloshGain = null;
+    let hissFilter = null;
+    let hissGain = null;
+    let rcsGain = null;
+
+    function initAudio() {
+      try {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        audioCtx = new AudioContext();
+
+        // 1. Low frequency propellant bulk mass slosh hum
+        humOsc = audioCtx.createOscillator();
+        humOsc.type = 'sine';
+        humOsc.frequency.setValueAtTime(65, audioCtx.currentTime);
+
+        sloshGain = audioCtx.createGain();
+        sloshGain.gain.setValueAtTime(0.04, audioCtx.currentTime);
+        humOsc.connect(sloshGain);
+        sloshGain.connect(audioCtx.destination);
+        humOsc.start();
+
+        // 2. High frequency micro-boil & vapor fizzle hiss (filtered noise)
+        const bufferSize = audioCtx.sampleRate * 2;
+        const noiseBuffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+        const output = noiseBuffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+          output[i] = Math.random() * 2 - 1;
+        }
+
+        const whiteNoise = audioCtx.createBufferSource();
+        whiteNoise.buffer = noiseBuffer;
+        whiteNoise.loop = true;
+
+        hissFilter = audioCtx.createBiquadFilter();
+        hissFilter.type = 'bandpass';
+        hissFilter.frequency.setValueAtTime(2800, audioCtx.currentTime);
+        hissFilter.Q.setValueAtTime(3.0, audioCtx.currentTime);
+
+        hissGain = audioCtx.createGain();
+        hissGain.gain.setValueAtTime(0.015, audioCtx.currentTime);
+
+        whiteNoise.connect(hissFilter);
+        hissFilter.connect(hissGain);
+        hissGain.connect(audioCtx.destination);
+        whiteNoise.start();
+
+        // 3. RCS Thruster Burst Node
+        const rcsNoise = audioCtx.createBufferSource();
+        rcsNoise.buffer = noiseBuffer;
+        rcsNoise.loop = true;
+        const rcsFilter = audioCtx.createBiquadFilter();
+        rcsFilter.type = 'lowpass';
+        rcsFilter.frequency.setValueAtTime(800, audioCtx.currentTime);
+        rcsGain = audioCtx.createGain();
+        rcsGain.gain.setValueAtTime(0.0, audioCtx.currentTime);
+
+        rcsNoise.connect(rcsFilter);
+        rcsFilter.connect(rcsGain);
+        rcsGain.connect(audioCtx.destination);
+        rcsNoise.start();
+
+      } catch (err) {
+        console.warn("Web Audio initialization bypassed:", err);
+      }
+    }
+
+    function updateAudioParameters() {
+      if (!audioCtx || !CFM_STATE.synthAudio) return;
+      try {
+        const targetFreq = 40 + CFM_STATE.sloshAmplitude * 150;
+        humOsc.frequency.setTargetAtTime(targetFreq, audioCtx.currentTime, 0.1);
+        
+        // Hiss intensifies as vapor fraction increases
+        const hissLevel = Math.min(0.12, 0.01 + (CFM_STATE.vaporFraction / 100) * 0.4);
+        hissGain.gain.setTargetAtTime(hissLevel, audioCtx.currentTime, 0.08);
+
+        // RCS noise volume
+        const rcsVol = CFM_STATE.rcsThrustLevel * 0.2;
+        rcsGain.gain.setTargetAtTime(rcsVol, audioCtx.currentTime, 0.05);
+      } catch (e) {}
+    }
+
+    function playAlertChirp() {
+      if (!audioCtx || !CFM_STATE.synthAudio) return;
+      try {
+        const osc = audioCtx.createOscillator();
+        const g = audioCtx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(880, audioCtx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(320, audioCtx.currentTime + 0.25);
+        g.gain.setValueAtTime(0.15, audioCtx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.25);
+        osc.connect(g);
+        g.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.26);
+      } catch (e) {}
+    }
+
+    /* =========================================================================
+       3. TELEMETRY LOGGING ENGINE & TOAST SYSTEM
+       ========================================================================= */
+    const eventConsole = document.getElementById('eventConsole');
+    function logTelemetry(type, msg) {
+      const timeStr = new Date().toISOString().substring(11, 23);
+      let colorClass = 'text-slate-300';
+      let tag = '[INFO]';
+      if (type === 'ALERT') {
+        colorClass = 'text-crimsonAlert font-bold';
+        tag = '[VAPOR-WARN]';
+      } else if (type === 'RCS') {
+        colorClass = 'text-emeraldSafe';
+        tag = '[RCS-FIRE]';
+      } else if (type === 'CONFIG') {
+        colorClass = 'text-cyanGlow';
+        tag = '[FLUID-CFG]';
+      }
+
+      const item = document.createElement('div');
+      item.className = 'flex items-start gap-1.5 leading-snug';
+      item.innerHTML = `<span class="text-slate-500">[${timeStr}]</span> <span class="${colorClass}">${tag} ${msg}</span>`;
+      eventConsole.insertBefore(item, eventConsole.firstChild);
+
+      // Truncate logs
+      if (eventConsole.children.length > 50) {
+        eventConsole.removeChild(eventConsole.lastChild);
+      }
+    }
+
+    function showToast(text) {
+      const toast = document.getElementById('toastMessage');
+      document.getElementById('toastText').innerText = text;
+      toast.classList.remove('hidden');
+      toast.classList.add('flex');
+      setTimeout(() => {
+        toast.classList.add('hidden');
+        toast.classList.remove('flex');
+      }, 2600);
+    }
+
+    /* =========================================================================
+       4. PROPELLANT TANK 2D SPH/PHYSICS SIMULATION (CANVAS)
+       ========================================================================= */
+    const tankCanvas = document.getElementById('cryoTankCanvas');
+    const ctx = tankCanvas.getContext('2d');
+
+    // Bubble and fluid droplet particles
+    let particles = [];
+    const MAX_PARTICLES = 160;
+
+    class CryoBubble {
+      constructor(tankW, tankH) {
+        this.reset(tankW, tankH);
+      }
+      reset(tankW, tankH) {
+        // Spawn predominantly at warm insulation side walls
+        const spawnOnLeft = Math.random() < 0.5;
+        this.x = spawnOnLeft ? (tankW * 0.18 + Math.random() * 25) : (tankW * 0.82 - Math.random() * 25);
+        this.y = tankH * 0.45 + Math.random() * (tankH * 0.35);
+        this.radius = 1.5 + Math.random() * 3.5;
+        this.vy = -(0.5 + Math.random() * 1.8);
+        this.vx = (Math.random() - 0.5) * 0.6;
+        this.alpha = 0.8;
+        this.isCavitationVapor = false;
+      }
+      update(tankW, tankH, sloshOffset, isVaporSpike) {
+        // Buoyancy drift upward and vortex pull into sump intake at bottom-center
+        const sumpX = tankW * 0.5;
+        const sumpY = tankH * 0.92;
+        const dx = sumpX - this.x;
+        const dy = sumpY - this.y;
+        const distToSump = Math.sqrt(dx * dx + dy * dy);
+
+        // Suction field near bottom sump intake
+        if (distToSump < tankH * 0.45) {
+          const suction = 0.08 / (distToSump * 0.02 + 0.5);
+          this.vx += (dx / distToSump) * suction;
+          this.vy += (dy / distToSump) * suction;
+        } else {
+          // Standard buoyant rise
+          this.vy -= 0.04; 
+          this.vx += (Math.random() - 0.5) * 0.15 + (CFM_STATE.acceleration * 12);
+        }
+
+        this.x += this.vx;
+        this.y += this.vy;
+
+        // Wall collisions
+        if (this.x < tankW * 0.16 || this.x > tankW * 0.84 || this.y < tankH * 0.28 || this.y > tankH * 0.94) {
+          this.reset(tankW, tankH);
+        }
+
+        if (isVaporSpike) {
+          this.isCavitationVapor = true;
+          this.radius = Math.min(8, this.radius + 0.08);
+        }
+      }
+      draw(c) {
+        c.save();
+        c.beginPath();
+        c.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+        c.fillStyle = this.isCavitationVapor ? 'rgba(255, 42, 85, 0.85)' : CFM_STATE.propellant === 'LOX' ? 'rgba(255, 185, 50, 0.75)' : 'rgba(255, 130, 200, 0.75)';
+        c.fill();
+        c.lineWidth = 1;
+        c.strokeStyle = '#FFFFFF';
+        c.stroke();
+        c.restore();
+      }
+    }
+
+    function resizeCanvas() {
+      const rect = tankCanvas.getBoundingClientRect();
+      tankCanvas.width = rect.width * window.devicePixelRatio;
+      tankCanvas.height = rect.height * window.devicePixelRatio;
+      ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+    }
+    window.addEventListener('resize', resizeCanvas);
+
+    function initParticles() {
+      particles = [];
+      const rect = tankCanvas.getBoundingClientRect();
+      for (let i = 0; i < MAX_PARTICLES; i++) {
+        particles.push(new CryoBubble(rect.width, rect.height));
+      }
+    }
+
+    /* =========================================================================
+       5. PHASE PLANE CHART ($a$ vs $\rho$) INITIALIZATION (CHART.JS)
+       ========================================================================= */
+    let phaseChart = null;
+
+    function initPhasePlaneChart() {
+      const chartCtx = document.getElementById('phasePlaneChart').getContext('2d');
+      const baseRho = CFM_STATE.baseDensity;
+      const critRho = baseRho * CFM_STATE.criticalDensityMargin;
+
+      // Analytical theoretical cavitation boundary curves for a vs rho
+      // High acceleration pulls bulk propellant up, exposing sump and causing micro-boil off ingress
+      const boundaryA = [0.0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30];
+      const cavBoundaryRho = boundaryA.map(a => baseRho - (baseRho * 0.03 + Math.pow(a / 0.30, 1.8) * (baseRho * 0.12)));
+
+      phaseChart = new Chart(chartCtx, {
+        type: 'scatter',
+        data: {
+          datasets: [
+            {
+              label: 'Vapor Cavitation Boundary',
+              data: boundaryA.map((a, idx) => ({ x: a, y: cavBoundaryRho[idx] })),
+              showLine: true,
+              borderColor: '#FF2A55',
+              borderWidth: 2,
+              borderDash: [5, 4],
+              pointRadius: 0,
+              fill: {
+                target: 'bottom',
+                above: 'rgba(255, 42, 85, 0.12)'
+              }
+            },
+            {
+              label: 'Incipient Slosh Boil-off',
+              data: boundaryA.map((a, idx) => ({ x: a, y: cavBoundaryRho[idx] + (baseRho * 0.035) })),
+              showLine: true,
+              borderColor: '#FFB800',
+              borderWidth: 1.5,
+              borderDash: [3, 3],
+              pointRadius: 0,
+              fill: false
+            },
+            {
+              label: 'Operating Trajectory',
+              data: [],
+              showLine: true,
+              borderColor: 'rgba(0, 240, 255, 0.4)',
+              borderWidth: 1.5,
+              pointRadius: 2,
+              pointBackgroundColor: '#00F0FF',
+              fill: false
+            },
+            {
+              label: 'Current Sump State',
+              data: [{ x: CFM_STATE.acceleration, y: CFM_STATE.currentDensity }],
+              pointRadius: 7,
+              pointHoverRadius: 9,
+              pointBackgroundColor: '#00F59B',
+              pointBorderColor: '#FFFFFF',
+              pointBorderWidth: 2,
+              showLine: false
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: '#090E17',
+              borderColor: '#00F0FF',
+              borderWidth: 1,
+              titleFont: { family: 'ui-monospace' },
+              bodyFont: { family: 'ui-monospace' },
+              callbacks: {
+                label: (ctx) => `a: ${ctx.parsed.x.toFixed(3)} m/s² | ρ: ${ctx.parsed.y.toFixed(1)} kg/m³`
+              }
+            }
+          },
+          scales: {
+            x: {
+              title: {
+                display: true,
+                text: 'Lateral Acceleration a (m/s²)',
+                color: '#94A3B8',
+                font: { family: 'ui-monospace', size: 10 }
+              },
+              min: 0.0,
+              max: 0.30,
+              grid: { color: 'rgba(30, 41, 59, 0.6)' },
+              ticks: { color: '#64748B', font: { family: 'ui-monospace', size: 9 } }
+            },
+            y: {
+              title: {
+                display: true,
+                text: 'Sump Fluid Density ρ (kg/m³)',
+                color: '#94A3B8',
+                font: { family: 'ui-monospace', size: 10 }
+              },
+              min: Math.floor(baseRho * 0.84),
+              max: Math.ceil(baseRho * 1.02),
+              grid: { color: 'rgba(30, 41, 59, 0.6)' },
+              ticks: { color: '#64748B', font: { family: 'ui-monospace', size: 9 } }
+            }
+          }
+        }
+      });
+    }
+
+    function updatePhaseChartScales() {
+      if (!phaseChart) return;
+      const baseRho = CFM_STATE.baseDensity;
+      const boundaryA = [0.0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30];
+      const cavBoundaryRho = boundaryA.map(a => baseRho - (baseRho * 0.03 + Math.pow(a / 0.30, 1.8) * (baseRho * 0.12)));
+
+      phaseChart.data.datasets[0].data = boundaryA.map((a, idx) => ({ x: a, y: cavBoundaryRho[idx] }));
+      phaseChart.data.datasets[1].data = boundaryA.map((a, idx) => ({ x: a, y: cavBoundaryRho[idx] + (baseRho * 0.035) }));
+      phaseChart.options.scales.y.min = Math.floor(baseRho * 0.84);
+      phaseChart.options.scales.y.max = Math.ceil(baseRho * 1.02);
+      phaseChart.update('none');
+    }
+
+    /* =========================================================================
+       6. CORE NUMERICAL PHYSICS & SENTINEL LOGIC LOOP
+       ========================================================================= */
+    let lastTime = performance.now();
+    let sloshPhase = 0;
+    let sloshWaveX = 0;
+    let cavitationTripped = false;
+
+    function stepPhysics(dt) {
+      CFM_STATE.simTime += dt;
+      const propInfo = PROPELLANT_DATA[CFM_STATE.propellant];
+
+      // 1. Slosh Dynamics: driven by acceleration transients and dampened by viscous damping & RCS
+      const naturalFreq = CFM_STATE.baseFreq;
+      sloshPhase += (2 * Math.PI * naturalFreq) * dt;
+
+      // Amplitude forced by lateral acceleration
+      const drivingForce = (CFM_STATE.acceleration * 1.8);
+      const dampingFactor = propInfo.viscosity * 0.8 + (CFM_STATE.rcsThrustLevel * 3.5); // RCS settling actively suppresses slosh
+      
+      const targetAmp = Math.max(0.01, drivingForce / (0.4 + dampingFactor * 0.3));
+      CFM_STATE.sloshAmplitude += (targetAmp - CFM_STATE.sloshAmplitude) * Math.min(1.0, dt * 2.5);
+
+      sloshWaveX = Math.sin(sloshPhase) * CFM_STATE.sloshAmplitude;
+
+      // 2. Micro-Boil-Off Generation at Warm Insulation Walls
+      // Wall climbing height proportional to slosh wave height
+      const wallContactFactor = Math.max(0.1, CFM_STATE.sloshAmplitude * 4.0);
+      CFM_STATE.boilRate = (propInfo.boilSensitivity * CFM_STATE.tankWallSuperheat * wallContactFactor * 0.02).toFixed(3);
+
+      // 3. Density Collapse Equation at Sump Intake:
+      // When sloshing is high and lateral 'a' tilts the cryogen, gas ullage pulls down and micro-boil bubbles ingest.
+      const boilVolumeFraction = (CFM_STATE.boilRate * 0.08) * (1 + CFM_STATE.acceleration * 6.0);
+      const sloshDepletion = Math.max(0, Math.abs(sloshWaveX) - 0.15) * 0.25;
+      const totalVaporFraction = Math.min(0.18, boilVolumeFraction + sloshDepletion);
+      
+      CFM_STATE.vaporFraction = (totalVaporFraction * 100);
+
+      // Local intake fluid density: rho = (1 - alpha_vapor) * rho_liquid + alpha_vapor * rho_gas
+      const rhoGas = propInfo.baseRho * 0.008; // Gas density is tiny fraction
+      CFM_STATE.currentDensity = (1 - totalVaporFraction) * propInfo.baseRho + totalVaporFraction * rhoGas;
+
+      // Critical Cavitation Limit Check
+      const critLimit = propInfo.baseRho * CFM_STATE.criticalDensityMargin;
+      const inCavitationZone = CFM_STATE.currentDensity < critLimit;
+
+      // 4. Autonomous Closed-Loop Sentinel Settle Controller
+      if (CFM_STATE.autoSentinelActive) {
+        // Sentinel triggers proactive settling before the limit is breached
+        const warningMargin = critLimit + (propInfo.baseRho * 0.025);
+        if (CFM_STATE.currentDensity < warningMargin) {
+          // Proportionally fire RCS ullage thruster to pull cryogen back onto sump
+          const deficit = warningMargin - CFM_STATE.currentDensity;
+          const thrustDemand = Math.min(1.0, deficit / (warningMargin - critLimit) * 1.2);
+          CFM_STATE.rcsThrustLevel = Math.max(CFM_STATE.rcsThrustLevel, thrustDemand);
+        } else {
+          // Gradual throttle down
+          CFM_STATE.rcsThrustLevel = Math.max(0.0, CFM_STATE.rcsThrustLevel - dt * 1.5);
+        }
+      } else {
+        // Manual decay
+        CFM_STATE.rcsThrustLevel = Math.max(0.0, CFM_STATE.rcsThrustLevel - dt * 1.8);
+      }
+
+      // Handle Cavitation Warning Trip
+      const warningBanner = document.getElementById('sloshCavitationWarning');
+      const pumpStateBadge = document.getElementById('pumpVaporRisk');
+      
+      if (inCavitationZone) {
+        warningBanner.classList.remove('hidden');
+        pumpStateBadge.innerText = 'CAVITATION INGESTION';
+        pumpStateBadge.className = 'font-bold text-crimsonAlert';
+
+        if (!cavitationTripped) {
+          cavitationTripped = true;
+          logTelemetry('ALERT', `Critical density drop: ${CFM_STATE.currentDensity.toFixed(1)} kg/m³ (< ${critLimit.toFixed(1)}). Turbopump vapor ingestion!`);
+          playAlertChirp();
+        }
+      } else {
+        warningBanner.classList.add('hidden');
+        cavitationTripped = false;
+        if (CFM_STATE.currentDensity < critLimit + (propInfo.baseRho * 0.025)) {
+          pumpStateBadge.innerText = 'INCIPIENT BOIL-OFF';
+          pumpStateBadge.className = 'font-bold text-amberCaution';
+        } else {
+          pumpStateBadge.innerText = 'NOMINAL SUBCOOLED';
+          pumpStateBadge.className = 'font-bold text-emeraldSafe';
+        }
+      }
+
+      // Update Phase History Track (last 25 points)
+      if (Math.random() < 0.25) {
+        CFM_STATE.phaseHistory.push({
+          x: Number(CFM_STATE.acceleration.toFixed(4)),
+          y: Number(CFM_STATE.currentDensity.toFixed(1))
+        });
+        if (CFM_STATE.phaseHistory.length > 28) {
+          CFM_STATE.phaseHistory.shift();
+        }
+      }
+
+      // Update Phase Chart
+      if (phaseChart) {
+        phaseChart.data.datasets[2].data = CFM_STATE.phaseHistory;
+        phaseChart.data.datasets[3].data = [{ x: CFM_STATE.acceleration, y: CFM_STATE.currentDensity }];
+        // Set point color based on state
+        phaseChart.data.datasets[3].pointBackgroundColor = inCavitationZone ? '#FF2A55' : (CFM_STATE.currentDensity < critLimit + (propInfo.baseRho * 0.025) ? '#FFB800' : '#00F59B');
+        phaseChart.update('none');
+      }
+
+      // Sync Audio synth
+      updateAudioParameters();
+    }
+
+    /* =========================================================================
+       7. RENDER TANK CUTAWAY GRAPHICS
+       ========================================================================= */
+    function renderTank(w, h) {
+      ctx.clearRect(0, 0, w, h);
+      const prop = PROPELLANT_DATA[CFM_STATE.propellant];
+
+      // Tank Geometry Coordinates (Elliptical Cap Cryo Dome)
+      const tankLeft = w * 0.16;
+      const tankRight = w * 0.84;
+      const tankTop = h * 0.12;
+      const tankBottom = h * 0.88;
+      const tankW = tankRight - tankLeft;
+      const tankH = tankBottom - tankTop;
+
+      // 1. Draw Outer Vacuum Shell & Multi-Layer Insulation (MLI)
+      ctx.save();
+      ctx.beginPath();
+      ctx.roundRect(tankLeft - 8, tankTop - 8, tankW + 16, tankH + 16, 24);
+      ctx.strokeStyle = '#1E293B';
+      ctx.lineWidth = 14;
+      ctx.stroke();
+
+      // Gold MLI reflective thermal boundary
+      ctx.beginPath();
+      ctx.roundRect(tankLeft - 2, tankTop - 2, tankW + 4, tankH + 4, 18);
+      ctx.strokeStyle = '#856404';
+      ctx.lineWidth = 4;
+      ctx.stroke();
+      ctx.restore();
+
+      // 2. Tank Interior Clip Region
+      ctx.save();
+      ctx.beginPath();
+      ctx.roundRect(tankLeft, tankTop, tankW, tankH, 16);
+      ctx.clip();
+
+      // Dark Ullage Gas Space (Pressurized Gaseous Helium / Boil-off)
+      ctx.fillStyle = '#070C16';
+      ctx.fillRect(tankLeft, tankTop, tankW, tankH);
+
+      // Ullage swirl vapor particles
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.03)';
+      for (let i = 0; i < 5; i++) {
+        const ox = tankLeft + (i / 5) * tankW;
+        ctx.fillRect(ox + Math.sin(CFM_STATE.simTime * 2 + i) * 15, tankTop + 20 + i * 18, 45, 12);
+      }
+
+      // 3. Liquid Propellant Mass (Sloshing Hydrodynamics with Sine Shear)
+      const fillHeightPercent = 0.58; // 58% nominal fill level
+      const liquidRestY = tankBottom - (tankH * fillHeightPercent);
+
+      ctx.beginPath();
+      ctx.moveTo(tankLeft, tankBottom);
+
+      // Sump curve
+      ctx.lineTo(tankRight, tankBottom);
+
+      // Right liquid contact wall
+      const rightSloshH = liquidRestY + (sloshWaveX * tankH * 1.1) + (CFM_STATE.acceleration * 80);
+      ctx.lineTo(tankRight, rightSloshH);
+
+      // Dynamic Free Surface Wave
+      const waveSegments = 30;
+      for (let i = waveSegments; i >= 0; i--) {
+        const segX = tankLeft + (i / waveSegments) * tankW;
+        const normX = (i / waveSegments) - 0.5; // -0.5 to 0.5
+        // Slosh tilt + secondary high frequency ripple
+        const tilt = normX * (sloshWaveX * tankH * 1.5) + (normX * CFM_STATE.acceleration * 140);
+        const ripple = Math.sin(normX * 8 + CFM_STATE.simTime * 6) * (CFM_STATE.sloshAmplitude * 12);
+        const surfY = liquidRestY + tilt + ripple;
+        ctx.lineTo(segX, surfY);
+      }
+
+      ctx.closePath();
+
+      // Cryogen fluid gradient
+      const liquidGrad = ctx.createLinearGradient(0, liquidRestY - 40, 0, tankBottom);
+      liquidGrad.addColorStop(0, prop.colorLiquid);
+      liquidGrad.addColorStop(1, 'rgba(3, 20, 45, 0.95)');
+      ctx.fillStyle = liquidGrad;
+      ctx.fill();
+
+      // Glowing free surface meniscus line
+      ctx.strokeStyle = prop.colorSurface;
+      ctx.lineWidth = 2.5;
+      ctx.shadowColor = prop.colorSurface;
+      ctx.shadowBlur = 10;
+      ctx.stroke();
+      ctx.shadowBlur = 0; // reset
+
+      // 4. Update & Draw Boiling/Vapor Bubbles Inside Liquid
+      const isCavSpike = CFM_STATE.currentDensity < (prop.baseRho * CFM_STATE.criticalDensityMargin);
+      particles.forEach(p => {
+        p.update(w, h, sloshWaveX, isCavSpike);
+        p.draw(ctx);
+      });
+
+      // 5. Warm MLI Wall Micro-Boil Sheath Glow
+      ctx.fillStyle = 'rgba(255, 184, 0, 0.15)';
+      ctx.fillRect(tankLeft, tankTop, 12, tankH);
+      ctx.fillRect(tankRight - 12, tankTop, 12, tankH);
+
+      // 6. Tank Bottom Sump Inlet Port (Turbopump intake zone)
+      const sumpW = 50;
+      const sumpH = 18;
+      const sumpX = (w / 2) - (sumpW / 2);
+      const sumpY = tankBottom - sumpH;
+
+      ctx.fillStyle = '#02060D';
+      ctx.fillRect(sumpX, sumpY, sumpW, sumpH + 10);
+      ctx.strokeStyle = isCavSpike ? '#FF2A55' : '#00F0FF';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(sumpX, sumpY, sumpW, sumpH);
+
+      // Screen mesh grid inside intake
+      ctx.beginPath();
+      for (let sx = sumpX + 6; sx < sumpX + sumpW; sx += 8) {
+        ctx.moveTo(sx, sumpY);
+        ctx.lineTo(sx, sumpY + sumpH);
+      }
+      ctx.strokeStyle = 'rgba(0, 240, 255, 0.4)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      // Anti-vortex baffle blades
+      ctx.fillStyle = '#475569';
+      ctx.fillRect(w / 2 - 2, sumpY - 14, 4, 14);
+
+      ctx.restore(); // remove clip
+
+      // 7. Reaction Control Thruster (RCS) Settle Plume Vectors
+      if (CFM_STATE.rcsThrustLevel > 0.05) {
+        const flameHeight = CFM_STATE.rcsThrustLevel * 45;
+        // Top settlement thrusters firing upwards (reaction pushes propellant downward into sump)
+        const leftThrusterX = tankLeft + 20;
+        const rightThrusterX = tankRight - 20;
+
+        ctx.save();
+        [leftThrusterX, rightThrusterX].forEach(tx => {
+          // Thruster nozzle
+          ctx.fillStyle = '#64748B';
+          ctx.fillRect(tx - 6, tankTop - 12, 12, 6);
+
+          // Expansive flame plume
+          const flameGrad = ctx.createLinearGradient(tx, tankTop - 12, tx, tankTop - 12 - flameHeight);
+          flameGrad.addColorStop(0, '#FFFFFF');
+          flameGrad.addColorStop(0.3, '#00F59B');
+          flameGrad.addColorStop(0.8, '#00F0FF');
+          flameGrad.addColorStop(1, 'transparent');
+
+          ctx.beginPath();
+          ctx.moveTo(tx - 5, tankTop - 12);
+          ctx.lineTo(tx + 5, tankTop - 12);
+          ctx.lineTo(tx + 12 + Math.random() * 4, tankTop - 12 - flameHeight);
+          ctx.lineTo(tx - 12 - Math.random() * 4, tankTop - 12 - flameHeight);
+          ctx.closePath();
+          ctx.fillStyle = flameGrad;
+          ctx.fill();
+        });
+        ctx.restore();
+      }
+
+      // 8. Slosh Direction & Acceleration Vector Arrow
+      ctx.save();
+      const arrowStartX = w * 0.5;
+      const arrowStartY = h * 0.08;
+      const arrowLen = CFM_STATE.acceleration * 300;
+      ctx.beginPath();
+      ctx.moveTo(arrowStartX, arrowStartY);
+      ctx.lineTo(arrowStartX + arrowLen, arrowStartY);
+      ctx.strokeStyle = '#FFB800';
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+
+      // Arrow head
+      if (Math.abs(arrowLen) > 4) {
+        ctx.beginPath();
+        const dir = arrowLen >= 0 ? 1 : -1;
+        ctx.moveTo(arrowStartX + arrowLen, arrowStartY);
+        ctx.lineTo(arrowStartX + arrowLen - dir * 7, arrowStartY - 5);
+        ctx.lineTo(arrowStartX + arrowLen - dir * 7, arrowStartY + 5);
+        ctx.closePath();
+        ctx.fillStyle = '#FFB800';
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    /* =========================================================================
+       8. MAIN ANIMATION LOOP
+       ========================================================================= */
+    function animationLoop(timestamp) {
+      const dt = Math.min(0.06, (timestamp - lastTime) / 1000);
+      lastTime = timestamp;
+
+      stepPhysics(dt);
+
+      const rect = tankCanvas.getBoundingClientRect();
+      renderTank(rect.width, rect.height);
+
+      // Update DOM Indicators
+      document.getElementById('currAccelDisplay').innerText = `${CFM_STATE.acceleration.toFixed(3)} m/s²`;
+      document.getElementById('canvasDensityTag').innerText = `${CFM_STATE.currentDensity.toFixed(1)} kg/m³`;
+      document.getElementById('dispSloshAmp').innerText = `${(CFM_STATE.sloshAmplitude * 100).toFixed(1)} cm`;
+      document.getElementById('dispBoilRate').innerText = `${CFM_STATE.boilRate} g/s`;
+      document.getElementById('dispVaporFraction').innerText = `${CFM_STATE.vaporFraction.toFixed(2)}%`;
+      document.getElementById('dispPressure').innerText = `${(CFM_STATE.tankPressure + (CFM_STATE.vaporFraction * 0.6)).toFixed(1)} kPa`;
+
+      // Update RCS Bar
+      const rcsPercent = Math.min(100, CFM_STATE.rcsThrustLevel * 100);
+      document.getElementById('rcsProgressBar').style.width = `${rcsPercent}%`;
+      document.getElementById('rcsPulseOutput').innerText = `${(CFM_STATE.rcsThrustLevel * 450).toFixed(0)} N (${rcsPercent > 5 ? 'ACTIVE' : 'IDLE'})`;
+
+      requestAnimationFrame(animationLoop);
+    }
+
+    /* =========================================================================
+       9. UI INTERACTION LISTENERS & CONFIGURATION
+       ========================================================================= */
+    document.addEventListener('DOMContentLoaded', () => {
+      // Icons
+      lucide.createIcons();
+
+      // Canvas & Particles
+      resizeCanvas();
+      initParticles();
+
+      // Initialize Phase Chart
+      initPhasePlaneChart();
+
+      // Initial Log
+      logTelemetry('CONFIG', 'CryoChamber sentinel online. Initialized LOX subcooled stage.');
+
+      // Propellant Toggle: LOX vs LH2
+      const btnLOX = document.getElementById('selectLOX');
+      const btnLH2 = document.getElementById('selectLH2');
+
+      btnLOX.addEventListener('click', () => {
+        CFM_STATE.propellant = 'LOX';
+        CFM_STATE.baseDensity = PROPELLANT_DATA.LOX.baseRho;
+        CFM_STATE.satTemp = PROPELLANT_DATA.LOX.satT;
+        CFM_STATE.currentDensity = PROPELLANT_DATA.LOX.baseRho;
+
+        btnLOX.className = "px-3 py-2 text-xs font-mono font-bold rounded-lg border border-cyan-500 bg-cyan-950/40 text-cyanGlow transition flex flex-col items-center";
+        btnLH2.className = "px-3 py-2 text-xs font-mono font-bold rounded-lg border border-panelBorder bg-slate-900/50 text-slate-400 hover:text-slate-200 transition flex flex-col items-center";
+
+        document.getElementById('propellantSymbol').innerText = 'LOX (Liquid O₂)';
+        document.getElementById('dispTsat').innerText = `${PROPELLANT_DATA.LOX.satT} K`;
+        document.getElementById('wallTempTag').innerText = `${PROPELLANT_DATA.LOX.wallTemp} K`;
+        document.getElementById('missionProfileTag').innerText = 'ARTEMIS TRANS-MARS INJECTION';
+
+        CFM_STATE.phaseHistory = [];
+        updatePhaseChartScales();
+        logTelemetry('CONFIG', 'Switched manifold to Liquid Oxygen (LOX). Density datum: 1141 kg/m³.');
+        showToast('Switched to LOX Cryogenic Stage');
+      });
+
+      btnLH2.addEventListener('click', () => {
+        CFM_STATE.propellant = 'LH2';
+        CFM_STATE.baseDensity = PROPELLANT_DATA.LH2.baseRho;
+        CFM_STATE.satTemp = PROPELLANT_DATA.LH2.satT;
+        CFM_STATE.currentDensity = PROPELLANT_DATA.LH2.baseRho;
+
+        btnLH2.className = "px-3 py-2 text-xs font-mono font-bold rounded-lg border border-purple-500 bg-purple-950/40 text-purple-300 transition flex flex-col items-center";
+        btnLOX.className = "px-3 py-2 text-xs font-mono font-bold rounded-lg border border-panelBorder bg-slate-900/50 text-slate-400 hover:text-slate-200 transition flex flex-col items-center";
+
+        document.getElementById('propellantSymbol').innerText = 'LH₂ (Liquid H₂)';
+        document.getElementById('dispTsat').innerText = `${PROPELLANT_DATA.LH2.satT} K`;
+        document.getElementById('wallTempTag').innerText = `${PROPELLANT_DATA.LH2.wallTemp} K`;
+        document.getElementById('missionProfileTag').innerText = 'MARS NUCLEAR THERMAL TRANSIT';
+
+        CFM_STATE.phaseHistory = [];
+        updatePhaseChartScales();
+        logTelemetry('CONFIG', 'Switched manifold to Liquid Hydrogen (LH₂). High boil-off susceptibility: 71 kg/m³.');
+        showToast('Switched to LH₂ Cryogenic Stage');
+      });
+
+      // Acceleration Input Slider
+      const accelInput = document.getElementById('accelInput');
+      accelInput.addEventListener('input', (e) => {
+        const val = parseFloat(e.target.value);
+        CFM_STATE.acceleration = val;
+        document.getElementById('sliderAccelVal').innerText = `${val.toFixed(3)} m/s²`;
+      });
+
+      // Resonance Frequency Slider
+      const freqInput = document.getElementById('freqInput');
+      freqInput.addEventListener('input', (e) => {
+        const val = parseFloat(e.target.value);
+        CFM_STATE.baseFreq = val;
+        document.getElementById('sliderFreqVal').innerText = `${val.toFixed(2)} Hz`;
+      });
+
+      // Slew / Jolt Perturbation Buttons
+      document.getElementById('pulsePitchBtn').addEventListener('click', () => {
+        CFM_STATE.acceleration = Math.min(0.28, CFM_STATE.acceleration + 0.12);
+        accelInput.value = CFM_STATE.acceleration;
+        document.getElementById('sliderAccelVal').innerText = `${CFM_STATE.acceleration.toFixed(3)} m/s²`;
+        logTelemetry('ALERT', `Reaction wheel slew transient: Δa = +0.12 m/s²`);
+      });
+
+      document.getElementById('pulseGimbalBtn').addEventListener('click', () => {
+        CFM_STATE.sloshAmplitude += 0.15;
+        logTelemetry('ALERT', `Main Engine gimbal jolt: Liquid wave kick Δz = +15 cm`);
+      });
+
+      // Auto Sentinel Toggle
+      const autoToggle = document.getElementById('autoSentinelToggle');
+      autoToggle.addEventListener('change', (e) => {
+        CFM_STATE.autoSentinelActive = e.target.checked;
+        const tag = document.getElementById('rcsSentinelModeTag');
+        if (CFM_STATE.autoSentinelActive) {
+          tag.innerText = 'AUTO CLOSED-LOOP';
+          tag.className = 'text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-950/60 border border-emerald-500/30 text-emeraldSafe';
+          logTelemetry('RCS', 'Sentinel autonomous feedback engaged.');
+        } else {
+          tag.innerText = 'MANUAL OVERRIDE ONLY';
+          tag.className = 'text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-950/60 border border-amber-500/30 text-amberCaution';
+          logTelemetry('RCS', 'Autonomous settling disabled. Manual throttle armed.');
+        }
+      });
+
+      // Manual Ullage Pulse Button
+      document.getElementById('manualUllagePulseBtn').addEventListener('click', () => {
+        CFM_STATE.rcsThrustLevel = 1.0;
+        logTelemetry('RCS', 'Manual ullage burn commanded: 450 N settle thrust.');
+        showToast('Manual Ullage Settle Burn Fired');
+      });
+
+      // Audio Toggle
+      const audioBtn = document.getElementById('audioToggleBtn');
+      audioBtn.addEventListener('click', () => {
+        if (!audioCtx) {
+          initAudio();
+        }
+        CFM_STATE.synthAudio = !CFM_STATE.synthAudio;
+        const icon = document.getElementById('audioIcon');
+        const text = document.getElementById('audioStatusText');
+        if (CFM_STATE.synthAudio) {
+          text.innerText = 'SYNTH ON';
+          icon.className = 'w-3.5 h-3.5 text-cyanGlow';
+          if (audioCtx.state === 'suspended') audioCtx.resume();
+        } else {
+          text.innerText = 'MUTED';
+          icon.className = 'w-3.5 h-3.5 text-slate-500';
+          if (audioCtx) {
+            sloshGain.gain.setValueAtTime(0, audioCtx.currentTime);
+            hissGain.gain.setValueAtTime(0, audioCtx.currentTime);
+            rcsGain.gain.setValueAtTime(0, audioCtx.currentTime);
+          }
+        }
+      });
+
+      // Clear Console
+      document.getElementById('clearLogBtn').addEventListener('click', () => {
+        eventConsole.innerHTML = '';
+        logTelemetry('CONFIG', 'Telemetry log reset.');
+      });
+
+      // Copy Telemetry
+      document.getElementById('copyTlmBtn').addEventListener('click', () => {
+        const payload = `CRYO-CFM SENTINEL TELEMETRY EXPORT\n` +
+          `Timestamp: ${new Date().toISOString()}\n` +
+          `Propellant: ${CFM_STATE.propellant}\n` +
+          `Sump Density (rho): ${CFM_STATE.currentDensity.toFixed(2)} kg/m3 (Base: ${CFM_STATE.baseDensity})\n` +
+          `Lateral Acceleration (a): ${CFM_STATE.acceleration.toFixed(4)} m/s2\n` +
+          `Slosh Amplitude: ${(CFM_STATE.sloshAmplitude * 100).toFixed(2)} cm\n` +
+          `Intake Vapor Fraction: ${CFM_STATE.vaporFraction.toFixed(2)}%\n` +
+          `Micro-Boil Rate: ${CFM_STATE.boilRate} g/s\n` +
+          `RCS Throttling: ${(CFM_STATE.rcsThrustLevel * 100).toFixed(0)}%\n` +
+          `Pump Sump State: ${document.getElementById('pumpVaporRisk').innerText}`;
+
+        const textArea = document.createElement("textarea");
+        textArea.value = payload;
+        textArea.style.position = "fixed";
+        textArea.style.opacity = "0";
+        document.body.appendChild(textArea);
+        textArea.select();
+        try {
+          document.execCommand('copy');
+          const notice = document.getElementById('copyNotice');
+          notice.innerText = 'COPIED TO CLIPBOARD';
+          notice.className = 'text-[10px] text-emeraldSafe font-bold';
+          setTimeout(() => {
+            notice.innerText = 'READY';
+            notice.className = 'text-[10px] text-slate-500';
+          }, 2000);
+        } catch (err) {
+          console.error("Copy failed", err);
+        }
+        document.body.removeChild(textArea);
+      });
+
+      // Start Loop on Window Load
+      requestAnimationFrame(animationLoop);
+    });
+  </script>
+</body>
+</html>
